@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Activity Detection - Vanilla JS</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .status-box {
+            padding: 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 18px;
+            transition: all 0.3s ease;
+        }
+        
+        .status-box.listening {
+            background-color: #e8f5e8;
+            border-color: #4CAF50;
+            color: #2E7D32;
+        }
+        
+        .status-box.speaking {
+            background-color: #fff3e0;
+            border-color: #FF9800;
+            color: #E65100;
+            animation: pulse 1s infinite;
+        }
+        
+        .status-box.loading {
+            background-color: #e3f2fd;
+            border-color: #2196F3;
+            color: #1565C0;
+        }
+        
+        .status-box.error {
+            background-color: #ffebee;
+            border-color: #f44336;
+            color: #c62828;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 10px;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 2px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .timestamp {
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice Activity Detection</h1>
+        
+        <div id="status" class="status-box loading">
+            Loading VAD...
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn" onclick="startVAD()" disabled>Start VAD</button>
+            <button id="stopBtn" onclick="stopVAD()" disabled>Stop VAD</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <h3 style="margin-top: 0;">⚙️ Timing Configuration</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <label for="redemptionFrames">Speech End Delay (frames):</label>
+                    <input type="range" id="redemptionFrames" min="1" max="16" value="4" oninput="updateConfig()">
+                    <span id="redemptionValue">4</span> frames (~<span id="redemptionMs">250</span>ms)
+                </div>
+                <div>
+                    <label for="negativeSpeechThreshold">End Sensitivity:</label>
+                    <input type="range" id="negativeSpeechThreshold" min="0.1" max="0.8" step="0.05" value="0.35" oninput="updateConfig()">
+                    <span id="negativeValue">0.35</span>
+                </div>
+            </div>
+            <p style="font-size: 12px; color: #666; margin: 10px 0 0 0;">
+                Lower delay = faster response but may cut off speech. Higher sensitivity = easier to end speech.
+            </p>
+        </div>
+        
+        <div class="log" id="log">
+            <div class="log-entry">
+                <span class="timestamp">[Loading]</span> Initializing Voice Activity Detection...
+            </div>
+        </div>
+    </div>
+
+    <!-- Load ONNX Runtime from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.js"></script>
+    
+    <!-- Load VAD from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.28/dist/bundle.min.js"></script>
+    
+    <script>
+        let myvad = null;
+        let isVADRunning = false;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            
+            // Also log to console
+            console.log(`[VAD ${type.toUpperCase()}]`, message);
+        }
+        
+        function updateStatus(message, className) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status-box ${className}`;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function updateConfig() {
+            const redemptionFrames = document.getElementById('redemptionFrames').value;
+            const negativeSpeechThreshold = document.getElementById('negativeSpeechThreshold').value;
+            
+            // Update display values
+            document.getElementById('redemptionValue').textContent = redemptionFrames;
+            document.getElementById('redemptionMs').textContent = Math.round(redemptionFrames * 64); // ~64ms per frame
+            document.getElementById('negativeValue').textContent = negativeSpeechThreshold;
+            
+            log(`⚙️ Config updated: ${redemptionFrames} frames (~${Math.round(redemptionFrames * 64)}ms delay), sensitivity: ${negativeSpeechThreshold}`);
+        }
+        
+        async function initializeVAD() {
+            try {
+                log('Initializing VAD with CDN assets...');
+                
+                myvad = await vad.MicVAD.new({
+                    onSpeechStart: () => {
+                        log('🎤 Speech started');
+                        updateStatus('🎤 User is speaking', 'speaking');
+                    },
+                    onSpeechEnd: (audio) => {
+                        log(`🔇 Speech ended (${audio.length} samples)`);
+                        updateStatus('🔇 Listening...', 'listening');
+                    },
+                    onVADMisfire: () => {
+                        log('⚠️ VAD misfire detected');
+                    },
+                    // Timing configuration to reduce speech end delay
+                    positiveSpeechThreshold: 0.5,     // Default: 0.5 (how confident to start speech)
+                    negativeSpeechThreshold: parseFloat(document.getElementById('negativeSpeechThreshold').value),
+                    redemptionFrames: parseInt(document.getElementById('redemptionFrames').value), // REDUCED from default 8
+                    frameSamples: 1536,               // Default: 1536 (samples per frame)
+                    preSpeechPadFrames: 1,            // Default: 1 (frames before speech start)
+                    minSpeechFrames: 3,               // Reduced from default 4 for faster response
+                    
+                    // Use CDN paths as specified in the documentation
+                    onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+                    baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.28/dist/",
+                });
+                
+                log('✅ VAD initialized successfully');
+                updateStatus('🔇 VAD Ready - Click Start to begin', 'listening');
+                
+                // Enable start button
+                document.getElementById('startBtn').disabled = false;
+                
+            } catch (error) {
+                log(`❌ Failed to initialize VAD: ${error.message}`, 'error');
+                updateStatus('❌ Failed to initialize VAD', 'error');
+                console.error('VAD initialization error:', error);
+            }
+        }
+        
+        async function startVAD() {
+            if (!myvad) {
+                log('❌ VAD not initialized', 'error');
+                return;
+            }
+            
+            try {
+                log('Starting VAD...');
+                await myvad.start();
+                isVADRunning = true;
+                
+                log('✅ VAD started successfully');
+                updateStatus('🔇 Listening for speech...', 'listening');
+                
+                // Update button states
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+            } catch (error) {
+                log(`❌ Failed to start VAD: ${error.message}`, 'error');
+                updateStatus('❌ Failed to start VAD', 'error');
+                console.error('VAD start error:', error);
+            }
+        }
+        
+        function stopVAD() {
+            if (!myvad || !isVADRunning) {
+                log('❌ VAD not running', 'error');
+                return;
+            }
+            
+            try {
+                log('Stopping VAD...');
+                myvad.pause();
+                isVADRunning = false;
+                
+                log('✅ VAD stopped');
+                updateStatus('⏸️ VAD Stopped', 'listening');
+                
+                // Update button states
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                
+            } catch (error) {
+                log(`❌ Failed to stop VAD: ${error.message}`, 'error');
+                console.error('VAD stop error:', error);
+            }
+        }
+        
+        // Initialize VAD when page loads
+        window.addEventListener('load', () => {
+            log('Page loaded, initializing VAD...');
+            initializeVAD();
+        });
+        
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (myvad && isVADRunning) {
+                myvad.pause();
+            }
+        });
+    </script>
+</body>
+</html>

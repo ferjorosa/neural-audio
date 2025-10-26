@@ -1,0 +1,32 @@
+[project]
+name = "simple-vad-demo"
+version = "1.0.0"
+description = "Real-time Voice Activity Detection using Silero VAD"
+requires-python = ">=3.8"
+dependencies = [
+    "fastapi>=0.104.1",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+    "silero-vad>=4.0.1",
+    "numpy>=1.24.3",
+    "sphn>=0.2.0",
+]
+
+[[tool.uv.index]]
+url = "file:///home/fer/Projects/probabilistic-reasoning-llms/pytorch-cu128"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
